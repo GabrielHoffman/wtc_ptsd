@@ -1,0 +1,229 @@
+---
+title: "Analysis of WTC PTSD"
+subtitle: 'Data from Laura Huckins'
+author: "Developed by [Gabriel Hoffman](http://gabrielhoffman.github.io/)"
+date: "Run on `r Sys.Date()`"
+documentclass: article
+output: 
+  html_document:
+  toc: true
+  smart: false
+---
+
+<!--- 
+# run analysis
+cd /Users/gabrielhoffman/workspace/wtc_ptsd
+rmarkdown::render("wtc_ptsd.Rmd", output_dir='./', intermediates_dir='./')
+--->
+
+
+```{r initialize, cache=FALSE, echo=FALSE, message=FALSE, results='hide'}
+nthreads = 4
+```
+
+```{r load.always, cache=FALSE, echo=FALSE, message=FALSE}
+suppressPackageStartupMessages(library(doParallel))
+
+cl <- makeCluster(nthreads)
+registerDoParallel(cl)
+
+suppressPackageStartupMessages(library(synapser))
+# login once and then save info
+# synLogin("gabriel.hoffman", "XXXXX", rememberMe=TRUE)
+synLogin() 
+```
+
+```{r load.packages, echo=FALSE, message=FALSE, results='hide'}
+
+suppressPackageStartupMessages(library(knitr))
+suppressPackageStartupMessages(library(scales))
+suppressPackageStartupMessages(library(qvalue))
+suppressPackageStartupMessages(library(limma))
+suppressPackageStartupMessages(library(edgeR))
+suppressPackageStartupMessages(library(gridExtra))
+suppressPackageStartupMessages(library(variancePartition))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(grid))
+suppressPackageStartupMessages(library(foreach))
+suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(readr)) 
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=TRUE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE,
+  dev = c("png", "pdf"), 
+  fig.width=7, fig.height=7)
+
+options(markdown.HTML.stylesheet = 'css/custom.css')
+```
+
+```{r download}
+
+# get list of files
+children = synGetChildren("syn17014797")
+
+childLst = as.list(children)
+
+fileDf = foreach(x = childLst, .combine=rbind) %do% {
+  data.frame(name = x$name, id=x$id, stringsAsFactors=FALSE) 
+}
+
+# read RNA-seq count files
+# combine them into count matrix
+geneCounts = foreach(i = grep("counts.txt$", fileDf$name), .combine=cbind ) %do% {
+
+  counts = read.table( synGet(fileDf$id[i])$path, row.names=1) 
+  colnames(counts) = gsub(".counts.txt", "",  fileDf$name[i])
+
+  counts
+}
+
+# read covariates
+covariates = read_delim( synGet("syn17015002")$path, delim=" ", col_names=FALSE)
+
+# read phenotype
+pheno = fread( synGet("syn17015000")$path)
+rownames(pheno) = pheno$subjectid
+
+# get intersection of samples
+subjectId = intersect(colnames(geneCounts), rownames(pheno))
+geneCounts = geneCounts[,colnames(geneCounts) %in% subjectId]
+pheno = pheno[pheno$subjectid %in% subjectId, ]
+rownames(pheno) = pheno$subjectid
+
+if( ! identical(colnames(geneCounts), rownames(pheno)) ){
+  stop("geneCounts and phenotype data don't match")
+}
+```
+
+
+
+```{r preprocess}
+# standard RNA-seq count normalization
+isexpr = rowSums(cpm(geneCounts)>1) >= 0.1*ncol(geneCounts)
+genes = DGEList(counts=geneCounts[isexpr,])
+genes = calcNormFactors(genes)
+
+# covariates
+design = model.matrix(~1, pheno)
+
+# normalize data and estimate precision weights
+vobj = voom(genes, design)
+```
+
+```{r vp, echo=TRUE}
+# run variancePartition.  Not particularl interesting in this case
+form = ~ caps_lifetime
+vp = fitExtractVarPartModel( vobj, form, pheno)
+plotVarPart(sortCols(vp))
+```
+
+```{r differentialExpression}
+# perform DE analysis, in this case with no covariaes
+dsgn = model.matrix(~ caps_lifetime, pheno)
+fit = lmFit( vobj, dsgn)
+fit = eBayes( fit )
+```
+
+```{r topTable}
+# view top genes
+kable(topTable( fit, coef='caps_lifetime'))
+```
+
+
+# Enrichments
+```{r enrich}
+# download gene set from my public Synapse project
+load(synGet( 'syn16816471' )$path)
+
+# exclude some gensets: mSigDB C4
+geneSetsCombined = geneSetsCombined[grep("^c4", names(geneSetsCombined), invert=TRUE)]
+
+geneInfo = readRDS(synGet( 'syn16816472' )$path)
+```
+
+
+```{r formTable}
+formTable = function(x,digits, stop=40){
+  if(missing(digits)){
+    digits = rep(2, ncol(x))
+  }
+  if( length(digits) != ncol(x)){
+    stop("Lengths don't match")
+  }
+  x = data.frame(x)
+  ret = sapply(1:ncol(x), function(i){
+    format(x[,i,drop=FALSE],digits=digits[i])})
+  ret = do.call("cbind", ret)
+  rownames(ret) = rownames(x)
+  ret[,1] = substring(ret[,1], 1, stop)
+  rownames(ret) = substring(rownames(ret), 1, stop)
+  ret
+}
+```
+
+```{r enrich_order}
+get_enrich_order = function( res, inter.gene.cor=0.05  ){
+  res$qvalue = qvalue( res$P.Value )$qvalue
+
+  tstat = res$t
+  names(tstat) = rownames(res)
+  tstat = tstat[!is.na(names(tstat))]
+
+  index = ids2indices(geneSetsCombined, names(tstat))
+
+  cameraPR( tstat, index,inter.gene.cor=inter.gene.cor )
+}
+```
+
+```{r DE_enrich}
+# Hypergeoemtic test on genes that pass FDR 5%
+# none in this case, so analysis is commented out
+res = topTable(fit, coef="caps_lifetime", number=Inf, sort.by="none")
+values = res$adj.P.Val
+names(values) = rownames(res)
+# resEnrich = enrich_mSigDB( , list('1'=geneSetsCombined), cutoff = .05)
+# kable(formTable( resEnrich[1:30,]))
+```
+
+# Enrichment based on t-statistics
+```{r enrichmentAnalsis}
+# uses continuous t-status to account for sub-significant signals
+# this analysis is very sensitive but can sometimes give false positives:
+# Genes in a gene set tend to be co-expressed.  This method builds in a 
+# method to account for the correlation using a fixed correlation value.
+# The order of the geneset ranksings will not change, but the FDR
+# can chalge *a lot* 
+res = topTable(fit, coef="caps_lifetime", number=Inf, sort.by="none")
+camera_caps_lifetime = get_enrich_order( res, inter.gene.cor=0.05 )  
+```
+
+
+
+
+
+
+```{r showEnrichments}
+ kable(formTable( camera_caps_lifetime[1:30,]))  
+```
+
+
+
+
+
+
+```{r, cache=FALSE}
+ knitr::knit_exit()
+```
+
+
+
+
+
+
