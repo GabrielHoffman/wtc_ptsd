@@ -204,16 +204,34 @@ res = topTable(fit, coef="caps_lifetime", number=Inf, sort.by="none")
 camera_caps_lifetime = get_enrich_order( res, inter.gene.cor=0.05 )  
 ```
 
-
-
-
-
-
-```{r showEnrichments}
+```{r showEnrichments, cache=FALSE}
  kable(formTable( camera_caps_lifetime[1:30,]))  
 ```
 
+# camera
+```{r enrichmentAnalsis_camera}
+index = ids2indices(geneSetsCombined, names(tstat))
 
+dsgn = model.matrix(~ caps_lifetime, pheno)
+camera_perm_caps_lifetime = camera( vobj, index, dsgn, inter.gene.cor=0.05 )
+```
+
+```{r showEnrichments_perm, cache=FALSE}
+ kable(formTable( camera_perm_caps_lifetime[1:30,]))  
+```
+
+# roast
+#### slow, so commented out
+```{r enrichmentAnalsis_roast}
+# index = ids2indices(geneSetsCombined, names(tstat))
+
+# dsgn = model.matrix(~ caps_lifetime, pheno)
+# roast_perm_caps_lifetime = roast( vobj, index, dsgn)
+```
+
+```{r showEnrichments_roast, cache=FALSE}
+ # kable(formTable( roast_perm_caps_lifetime[1:30,]))  
+```
 
 
 
