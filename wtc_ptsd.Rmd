@@ -210,14 +210,14 @@ camera_caps_lifetime = get_enrich_order( res, inter.gene.cor=0.05 )
 
 # camera
 ```{r enrichmentAnalsis_camera}
-index = ids2indices(geneSetsCombined, names(tstat))
+# index = ids2indices(geneSetsCombined, names(tstat))
 
-dsgn = model.matrix(~ caps_lifetime, pheno)
-camera_perm_caps_lifetime = camera( vobj, index, dsgn, inter.gene.cor=0.05 )
+# dsgn = model.matrix(~ caps_lifetime, pheno)
+# camera_perm_caps_lifetime = camera( vobj, index, dsgn, inter.gene.cor=0.05 )
 ```
 
 ```{r showEnrichments_perm, cache=FALSE}
- kable(formTable( camera_perm_caps_lifetime[1:30,]))  
+ # kable(formTable( camera_perm_caps_lifetime[1:30,]))  
 ```
 
 # roast
